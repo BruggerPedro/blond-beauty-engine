@@ -22,9 +22,6 @@ concurrency:
 
 env:
   GO_VERSION: "1.25.9"
-  # GHCR image used for Docker build validation on push to main.
-  # This is NOT pushed from this workflow — deploy-staging.yml owns the push.
-  IMAGE_REF: ghcr.io/${{ github.repository }}:ci-${{ github.sha }}
 
 jobs:
   # ── 1. Lint ────────────────────────────────────────────────────────────────
@@ -149,14 +146,12 @@ jobs:
           # for distroless multi-stage builds where packages are not shipped.
           failure-threshold: error
 
-  # ── 6. Docker build validation (push to main only) ────────────────────────
-  # We build the image here to catch build-time errors before staging deploys.
-  # The image is NOT pushed; deploy-staging.yml owns the registry push.
+  # ── 6. Docker build validation ──────────────────────────────────────────────
+  # Builds the image on every PR and push (no push to registry). Catches
+  # Dockerfile regressions before merge. deploy-staging.yml owns the GHCR push.
   docker-build-validate:
     name: Docker Build Validation
     runs-on: ubuntu-latest
-    # Only runs on push to main, not on pull requests.
-    if: github.event_name == 'push'
     needs: [lint, test, build, govulncheck, docker-lint]
     permissions:
       contents: read
@@ -164,6 +159,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # GHCR / Docker require the repository path to be lowercase. GitHub
+      # usernames may contain capitals (e.g. BruggerPedro), which breaks tags
+      # like ghcr.io/BruggerPedro/repo:tag — error: repository name must be lowercase.
+      # Use GITHUB_OUTPUT (not only GITHUB_ENV) so ${{ }} in actions' `with:` is reliable.
+      - name: Set image tag for validation build
+        id: image_tag
+        run: |
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "ref=ghcr.io/${REPO_LOWER}:ci-${{ github.sha }}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -175,14 +180,14 @@ jobs:
           push: false
           # Export to Docker daemon so Trivy can scan it locally.
           load: true
-          tags: ${{ env.IMAGE_REF }}
+          tags: ${{ steps.image_tag.outputs.ref }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Scan image for vulnerabilities (Trivy)
         uses: aquasecurity/trivy-action@0.31.0
         with:
-          image-ref: ${{ env.IMAGE_REF }}
+          image-ref: ${{ steps.image_tag.outputs.ref }}
           format: table
           exit-code: "1"
           ignore-unfixed: true
@@ -195,7 +200,7 @@ jobs:
     name: All CI Checks Pass
     runs-on: ubuntu-latest
     if: always()
-    needs: [lint, test, build, govulncheck, docker-lint]
+    needs: [lint, test, build, govulncheck, docker-lint, docker-build-validate]
     steps:
       - name: Check all required jobs succeeded
         env:

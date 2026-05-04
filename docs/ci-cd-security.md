@@ -29,13 +29,14 @@ This document is the single source of truth for the CI/CD pipeline, security con
 
 ```
 Pull Request → main
-  └── ci.yml           (lint, vet, test+race, build, govulncheck, hadolint)
+  └── ci.yml           (lint, vet, test+race, build, govulncheck, hadolint,
+                        Docker build + Trivy — image tag lowercased for GHCR)
   └── security.yml     (CodeQL, Gitleaks, Semgrep)
          │
          ▼  [PR approved + all checks pass]
          │
 Push → main (after merge)
-  └── ci.yml           (same + Docker build validation + Trivy scan)
+  └── ci.yml           (same jobs as PR)
   └── security.yml     (same scans)
   └── deploy-staging.yml
         ├── CI Gate    (re-validates lint, test, build, govulncheck)
@@ -75,6 +76,7 @@ Every PR targeting `main` triggers `ci.yml` and `security.yml` in parallel.
 | `build` | `go build` | Binary compilation succeeds |
 | `govulncheck` | `govulncheck` | Known vulnerabilities in Go dependencies |
 | `docker-lint` | `hadolint` | Dockerfile best practices |
+| `docker-build-validate` | `docker build` + Trivy | Image builds; fails on CRITICAL/HIGH in the image. GHCR path is lowercased (Docker requires lowercase repository names). |
 | `all-checks-pass` | Gate job | Summary status required by branch protection |
 
 ### `security.yml` jobs on PR
@@ -92,10 +94,9 @@ Every PR targeting `main` triggers `ci.yml` and `security.yml` in parallel.
 
 ## What Runs on Push to Main
 
-All PR jobs plus:
+The same `ci.yml` and `security.yml` jobs as on a PR (including Docker build validation). Additionally:
 
-- `docker-build-validate` in `ci.yml`: builds the Docker image (no push) and runs a Trivy vulnerability scan. Fails on CRITICAL/HIGH unfixed vulnerabilities.
-- `deploy-staging.yml` is triggered as a separate workflow (push to main event) and runs in parallel with `ci.yml`.
+- `deploy-staging.yml` is triggered as a separate workflow (push to main) and runs in parallel: build and push the image to GHCR, Trivy scan of the pushed image, then the staging deploy step.
 
 ---
 
