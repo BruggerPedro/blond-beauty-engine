@@ -2,8 +2,6 @@ package payments
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -11,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/blondbeauty/blond-beauty-engine/internal/idempotency"
 	"github.com/blondbeauty/blond-beauty-engine/internal/message"
 	"github.com/blondbeauty/blond-beauty-engine/internal/workers"
 )
@@ -312,8 +311,7 @@ func refFromRow(p *PaymentRow, requestID string) PaymentRef {
 // produces the same key, so a unique index on payment_attempts and the
 // provider's own idempotency mechanism both guard against double-charge.
 func buildRequestID(messageID, paymentID string, op Operation) string {
-	h := sha256.Sum256([]byte(messageID + "|" + paymentID + "|" + string(op)))
-	return hex.EncodeToString(h[:16])
+	return idempotency.Key("payments.provider_request", messageID, paymentID, string(op))
 }
 
 func providerCaps(p Provider) Capabilities { return p.Capabilities() }
@@ -349,6 +347,10 @@ func successEventFor(op Operation, st Status) string {
 			return EventFailed
 		case StatusPaid:
 			return EventCaptured
+		default:
+			// Remaining statuses (Unknown, Captured, Cancelled, Refunded,
+			// Chargeback) are not expected outcomes of create/confirm; fall
+			// through to return "" below.
 		}
 	case OpCapture:
 		if st == StatusPaid || st == StatusCaptured {

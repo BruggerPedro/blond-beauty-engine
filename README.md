@@ -562,11 +562,11 @@ same transaction as its business work. A duplicate message is acked without re-p
 Each domain has additional dedup:
 
 - **Payments**: `payment_attempts(payment_id, operation, request_id)` unique index.
-  `request_id` is `sha256(message_id | payment_id | operation)`.
+  `request_id` is a canonical SHA-256 key built from typed JSON key material.
 - **Webhook**: `payment_events(provider, provider_event_id)` unique index.
 - **Email**: `email_messages.idempotency_key` unique constraint; already-sent guard in `Handle`.
 - **Fiscal**: invoice status guard (already-authorized → ack); `idempotency_key` per
-  call is `message_id|invoice_id|operation`.
+  call is a canonical SHA-256 key built from typed JSON key material.
 - **Fulfillment**: `shipments.idempotency_key` = `"fulfill|" + order_id` unique; already-
   dispatched guard in `Handle`.
 
@@ -578,7 +578,8 @@ Each domain has additional dedup:
 | `ErrProviderTransient`, unclassified errors | plain error → exponential backoff retry |
 
 The worker framework (see [`internal/workers/worker.go`](internal/workers/worker.go))
-handles nack-with-requeue for transient errors and publishes to `.dlq` for permanent ones.
+commits handled failure state, republishes transient retries with an incremented
+`x-engine-attempt` header, and routes permanent/exhausted messages to `.dlq`.
 
 ### Permanent errors and DLQ
 
@@ -678,7 +679,7 @@ Expected:
 | `ENGINE_REDIS_URL` | no | `""` | leave empty to disable |
 | `ENGINE_HTTP_ADDR` | no | `:8081` | bind for /healthz /readyz /metrics |
 | `ENGINE_LOG_LEVEL` | no | `info` | `debug` / `info` / `warn` / `error` |
-| `ENGINE_ENV` | no | `dev` | `dev` / `staging` / `prod` |
+| `ENGINE_ENV` | no | `dev` | `dev` / `staging` / `prod`; fake providers are refused in `prod`/`production` |
 | `ENGINE_SERVICE_NAME` | no | `blond-beauty-engine` | added to every log line |
 | `ENGINE_POSTGRES_MAX_CONNS` | no | `10` | |
 | `ENGINE_RABBIT_PREFETCH` | no | `32` | per-consumer prefetch |
@@ -694,6 +695,8 @@ Expected:
 | `ENGINE_FULFILLMENT_CONCURRENCY` | no | `4` | goroutines for orders.fulfillment |
 
 Never put production credentials in `.env.example` or commit `.env`.
+With `ENGINE_ENV=prod` or `ENGINE_ENV=production`, the Engine fails fast if any
+currently fake-backed provider worker is enabled.
 
 ## Graceful shutdown
 
@@ -754,8 +757,9 @@ idempotency key guarantee safety without a long-held lock.
 | Fulfillment | `fake-fulfillment` | Correios / Melhor Envio (future) |
 
 The Engine's real Getnet adapter is explicitly deferred. The fake provider is the only
-adapter that ships in this slice. Do not implement Getnet until the two-phase model
-refactor is in place.
+adapter that ships in this slice. The process refuses to boot fake-backed provider
+workers when `ENGINE_ENV=prod` or `ENGINE_ENV=production`. Do not implement Getnet
+until the two-phase model refactor is in place.
 
 ### Fiscal compliance notice
 

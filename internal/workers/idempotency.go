@@ -23,7 +23,7 @@ func NewIdempotencyStore(pool *pgxpool.Pool) *IdempotencyStore {
 }
 
 // Claim atomically reserves a message for processing. It returns:
-//   - (true, nil)  if this is the first time we see this message;
+//   - (true, nil)  if this message can be processed now;
 //   - (false, nil) if the message was already processed (duplicate);
 //   - (false, err) on db error.
 //
@@ -45,6 +45,19 @@ RETURNING message_id
 		return false, fmt.Errorf("claim message: %w", err)
 	}
 	return true, nil
+}
+
+// Release removes an in-progress claim after a retryable failure. Call inside
+// the same tx as any attempt counters or last_error writes that should survive
+// before the message is retried.
+func (s *IdempotencyStore) Release(ctx context.Context, tx pgx.Tx, queue, messageID string) error {
+	_, err := tx.Exec(ctx,
+		`DELETE FROM engine_processed_messages WHERE queue=$1 AND message_id=$2 AND status='in_progress'`,
+		queue, messageID)
+	if err != nil {
+		return fmt.Errorf("release message claim: %w", err)
+	}
+	return nil
 }
 
 // MarkDone updates the dedup row to processed. Call inside the same tx as the

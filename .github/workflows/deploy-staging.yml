@@ -1,0 +1,222 @@
+name: Deploy – Staging
+
+# Triggers only on push to main (i.e., after a PR is merged and reviewed).
+# This workflow:
+#   1. Re-runs the full CI validation gate.
+#   2. Builds and pushes the Docker image to GHCR.
+#   3. Scans the pushed image for vulnerabilities.
+#   4. Deploys to the staging environment (placeholder — fill in your target).
+#
+# Production deploys are handled by deploy-production.yml (manual only).
+
+on:
+  push:
+    branches: [main]
+
+# Minimal top-level permissions.
+permissions:
+  contents: read
+
+# Never allow two staging deploys to race. Do not cancel in-progress to avoid
+# leaving staging in a half-deployed state; queue instead.
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+env:
+  GO_VERSION: "1.25.9"
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ── 1. CI Gate ────────────────────────────────────────────────────────────
+  # Re-run the full CI suite here so the staging pipeline is self-contained
+  # and auditable. It also guards against timing windows where a bad commit
+  # slips through between the ci.yml run and this workflow triggering.
+  ci-gate:
+    name: CI Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Check formatting (gofmt)
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "Unformatted files: $unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Run tests with race detector
+        run: go test -count=1 -race ./...
+
+      - name: Build engine binary
+        run: go build -trimpath -o bin/engine ./cmd/engine
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        run: govulncheck ./...
+
+  # ── 2. Build and push Docker image ────────────────────────────────────────
+  build-push-image:
+    name: Build & Push Image
+    runs-on: ubuntu-latest
+    needs: ci-gate
+    permissions:
+      contents: read
+      packages: write   # Required to push to GHCR.
+      security-events: write  # Required to upload Trivy SARIF.
+    outputs:
+      # Pass the digest to downstream jobs so they reference an immutable image.
+      image-digest: ${{ steps.push.outputs.digest }}
+      image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          # GITHUB_TOKEN has packages:write when granted above.
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # Short SHA tag — immutable, used by downstream jobs and rollback.
+            type=sha,prefix=sha-,format=short
+            # Mutable staging tag — convenient for staging environment refs.
+            type=raw,value=staging
+
+      - name: Build and push image
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Use GitHub Actions cache to speed up repeated builds.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Include build provenance for supply chain security (SLSA level 1).
+          provenance: true
+          sbom: true
+
+      - name: Scan pushed image for vulnerabilities (Trivy)
+        uses: aquasecurity/trivy-action@0.31.0
+        with:
+          # Scan the immutable digest, not the mutable :staging tag.
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+          format: sarif
+          output: trivy-staging.sarif
+          # Fail on CRITICAL and HIGH; ignore vulnerabilities without a fix
+          # to reduce noise from upstream base image lag.
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+
+      - name: Upload Trivy SARIF to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-staging.sarif
+          category: trivy-staging
+
+  # ── 3. Deploy to staging ──────────────────────────────────────────────────
+  # This job deploys the validated, scanned image to the staging environment.
+  # Replace the placeholder step with your real deployment command.
+  #
+  # The GitHub Environment "staging" must be configured in:
+  #   Settings → Environments → staging
+  # Set "Deployment branches" to "main" only.
+  # Add staging-specific secrets: STAGING_POSTGRES_URL, STAGING_RABBIT_URL,
+  # STAGING_REDIS_URL (if Redis is used).
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build-push-image
+    environment:
+      name: staging
+      # Update this URL once the staging environment has a real address.
+      url: https://staging.blondbeauty.com.br
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy to staging
+        env:
+          IMAGE_DIGEST: ${{ needs.build-push-image.outputs.image-digest }}
+          IMAGE_REF: ${{ needs.build-push-image.outputs.image-ref }}
+        run: |
+          echo "Deploying image: $IMAGE_REF"
+          echo ""
+          echo "──────────────────────────────────────────────────────────────"
+          echo "  DEPLOYMENT PLACEHOLDER"
+          echo "  Replace this step with your actual deployment command."
+          echo ""
+          echo "  Common options:"
+          echo ""
+          echo "  Railway:"
+          echo "    railway up --service engine --environment staging \\"
+          echo "      --image \$IMAGE_REF"
+          echo ""
+          echo "  Fly.io:"
+          echo "    flyctl deploy --image \$IMAGE_REF --app blond-engine-staging"
+          echo ""
+          echo "  AWS ECS:"
+          echo "    aws ecs update-service \\"
+          echo "      --cluster staging \\"
+          echo "      --service blond-engine \\"
+          echo "      --force-new-deployment"
+          echo ""
+          echo "  Kubernetes (kubectl):"
+          echo "    kubectl set image deployment/blond-engine \\"
+          echo "      engine=\$IMAGE_REF \\"
+          echo "      --namespace staging"
+          echo ""
+          echo "  Docker Compose / VPS (via SSH):"
+          echo "    ssh deploy@staging.blondbeauty.com.br \\"
+          echo "      'docker pull \$IMAGE_REF && docker-compose up -d'"
+          echo "──────────────────────────────────────────────────────────────"
+          echo ""
+          echo "Required environment secrets for staging:"
+          echo "  STAGING_POSTGRES_URL, STAGING_RABBIT_URL, STAGING_REDIS_URL"
+          echo ""
+          echo "To add them: Settings → Environments → staging → Environment secrets"
+
+      - name: Staging deploy summary
+        env:
+          GH_SHA: ${{ github.sha }}
+          GH_ACTOR: ${{ github.actor }}
+          IMAGE_DIGEST: ${{ needs.build-push-image.outputs.image-digest }}
+        run: |
+          {
+            echo "### Staging Deploy"
+            echo ""
+            echo "- **Commit:** \`$GH_SHA\`"
+            echo "- **Image digest:** \`$IMAGE_DIGEST\`"
+            echo "- **Actor:** \`$GH_ACTOR\`"
+            echo "- **Time:** $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Time:** $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,46 @@
+# CODEOWNERS — blond-beauty-engine
+#
+# This file defines code ownership for automatic review assignment.
+# GitHub will automatically request a review from the listed owners
+# when a pull request modifies the matching paths.
+#
+# Format: <pattern>  <owner> [<owner> ...]
+# Owners can be GitHub usernames (@username), teams (@org/team-name),
+# or email addresses.
+#
+# Owner: @BruggerPedro is the designated reviewer for all paths below.
+# Add team names (e.g. @org/team-name) as the project grows.
+#
+# Documentation: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# ── Default owner for all files ────────────────────────────────────────────
+# Every pull request will request a review from the backend team unless
+# a more specific rule below overrides it.
+*                               @BruggerPedro
+
+# ── CI/CD and infrastructure files ─────────────────────────────────────────
+# Changes to the pipeline or deployment configs must be reviewed by
+# the DevOps/SRE responsible. Add the appropriate GitHub handle below.
+.github/                        @BruggerPedro
+Dockerfile                      @BruggerPedro
+.dockerignore                   @BruggerPedro
+.golangci.yml                   @BruggerPedro
+
+# ── Configuration and secrets management ───────────────────────────────────
+internal/config/                @BruggerPedro
+
+# ── Payment-sensitive code ──────────────────────────────────────────────────
+# Payment provider integrations carry the highest business risk.
+# Require review from a senior engineer familiar with PCI/financial flows.
+internal/payments/              @BruggerPedro
+
+# ── Fiscal / NF-e code ──────────────────────────────────────────────────────
+# Fiscal code has legal and financial compliance implications.
+internal/fiscal/                @BruggerPedro
+
+# ── Security-sensitive packages ─────────────────────────────────────────────
+internal/security/              @BruggerPedro
+internal/contract/              @BruggerPedro
+
+# ── Documentation ───────────────────────────────────────────────────────────
+docs/                           @BruggerPedro

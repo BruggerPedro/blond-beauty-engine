@@ -1,0 +1,44 @@
+# Go build output
+bin/
+*.test
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+
+# Go workspace
+go.work
+go.work.sum
+
+# Local configuration — NEVER copy secrets into the image
+.env
+.env.*
+!.env.example
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Documentation and non-runtime files
+docs/
+*.md
+LICENSE
+
+# Migrations are applied separately, not baked into the image
+migrations/
+
+# Git
+.git/
+.gitignore
+
+# CI artifacts
+.github/
+
+# Test data
+testdata/
+
+# Cursor / dev tooling
+.claire/

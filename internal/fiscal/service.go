@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/blondbeauty/blond-beauty-engine/internal/idempotency"
 	"github.com/blondbeauty/blond-beauty-engine/internal/message"
 	"github.com/blondbeauty/blond-beauty-engine/internal/workers"
 )
@@ -116,11 +117,15 @@ func (s *Service) HandleCancel(ctx context.Context, tx pgx.Tx, env *message.Enve
 	if cancelErr != nil {
 		inv.LastError = truncate(cancelErr.Error(), 500)
 		if errors.Is(cancelErr, ErrProviderTransient) {
-			_ = s.store.UpdateInvoice(ctx, tx, inv)
+			if err := s.store.UpdateInvoice(ctx, tx, inv); err != nil {
+				return err
+			}
 			return cancelErr
 		}
 		// Permanent cancellation failure: log and DLQ — the invoice remains authorized.
-		_ = s.store.UpdateInvoice(ctx, tx, inv)
+		if err := s.store.UpdateInvoice(ctx, tx, inv); err != nil {
+			return err
+		}
 		return workers.Permanent(cancelErr)
 	}
 
@@ -250,17 +255,25 @@ func (s *Service) performIssue(
 			inv.Status = StatusRejected
 			inv.RejectionCode = rejection.Code
 			inv.RejectionMessage = truncate(rejection.Message, 500)
-			_ = s.store.UpdateInvoice(ctx, tx, inv)
-			_ = s.insertEvent(ctx, tx, inv, EventRejected, map[string]any{
+			if err := s.store.UpdateInvoice(ctx, tx, inv); err != nil {
+				return err
+			}
+			if err := s.insertEvent(ctx, tx, inv, EventRejected, map[string]any{
 				"rejection_code":    rejection.Code,
 				"rejection_message": rejection.Message,
-			})
-			_ = s.emitRejected(ctx, tx, env, inv)
+			}); err != nil {
+				return err
+			}
+			if err := s.emitRejected(ctx, tx, env, inv); err != nil {
+				return err
+			}
 			return workers.Permanent(provErr)
 		}
 
 		// Transient: persist attempt_count + last_error, retry later.
-		_ = s.store.UpdateInvoice(ctx, tx, inv)
+		if err := s.store.UpdateInvoice(ctx, tx, inv); err != nil {
+			return err
+		}
 		return provErr
 	}
 
@@ -422,5 +435,5 @@ func chain(child *message.Envelope, parent *message.Envelope) {
 
 // buildIdemKey derives a stable, opaque key for (message, invoice, op).
 func buildIdemKey(messageID, invoiceID, op string) string {
-	return messageID + "|" + invoiceID + "|" + op
+	return idempotency.Key("fiscal.provider_request", messageID, invoiceID, op)
 }

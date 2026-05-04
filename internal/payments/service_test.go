@@ -317,3 +317,11 @@ func TestBuildRequestIDStableAcrossRetries(t *testing.T) {
 		t.Fatal("must differ for different message ids")
 	}
 }
+
+func TestBuildRequestIDSeparatesDelimiterCollisions(t *testing.T) {
+	a := buildRequestID("msg|pay", "create", OpCreate)
+	b := buildRequestID("msg", "pay|create", OpCreate)
+	if a == b {
+		t.Fatal("must not collide when identifiers contain delimiters")
+	}
+}

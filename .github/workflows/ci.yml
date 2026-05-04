@@ -1,0 +1,210 @@
+name: CI
+
+# Runs on every pull request targeting main and on every push to main.
+# Pull requests: validate only — no deployment, no image push.
+# Push to main: same validation + Docker build validation + Trivy image scan.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Minimal top-level permissions; each job requests only what it needs.
+permissions:
+  contents: read
+
+# Cancel in-progress runs for the same PR to save minutes.
+# For pushes to main we do NOT cancel so staging deploys are not interrupted.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  GO_VERSION: "1.25.9"
+  # GHCR image used for Docker build validation on push to main.
+  # This is NOT pushed from this workflow — deploy-staging.yml owns the push.
+  IMAGE_REF: ghcr.io/${{ github.repository }}:ci-${{ github.sha }}
+
+jobs:
+  # ── 1. Lint ────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Check formatting (gofmt)
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not gofmt-formatted:"
+            echo "$unformatted"
+            echo ""
+            echo "Run 'gofmt -w .' locally to fix."
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: golangci-lint
+        # The golangci-lint-action downloads a pre-built binary compiled with
+        # Go 1.24, which refuses to analyse Go 1.25.x projects. We install
+        # from source instead so it is compiled by the Go 1.25.9 toolchain
+        # already set up above — resolving the version mismatch completely.
+        run: |
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+          golangci-lint run --timeout=5m
+
+  # ── 2. Tests ───────────────────────────────────────────────────────────────
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run tests with race detector
+        run: go test -count=1 -race -coverprofile=coverage.out ./...
+
+      - name: Print coverage summary
+        run: go tool cover -func=coverage.out | tail -n 1
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-${{ github.sha }}
+          path: coverage.out
+          retention-days: 7
+
+  # ── 3. Build ───────────────────────────────────────────────────────────────
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build engine binary
+        run: go build -trimpath -o bin/engine ./cmd/engine
+
+      - name: Verify binary exists and is executable
+        run: test -x bin/engine
+
+  # ── 4. Dependency vulnerability scan ──────────────────────────────────────
+  govulncheck:
+    name: Vulnerability Scan (govulncheck)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        run: govulncheck ./...
+
+  # ── 5. Dockerfile lint ─────────────────────────────────────────────────────
+  docker-lint:
+    name: Dockerfile Lint (hadolint)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          # Fail only on errors (DL/SC error-level rules).
+          # Warnings such as DL3018 (pin apk versions) are surfaced in the
+          # log but do not block the PR — Alpine package pinning is impractical
+          # for distroless multi-stage builds where packages are not shipped.
+          failure-threshold: error
+
+  # ── 6. Docker build validation (push to main only) ────────────────────────
+  # We build the image here to catch build-time errors before staging deploys.
+  # The image is NOT pushed; deploy-staging.yml owns the registry push.
+  docker-build-validate:
+    name: Docker Build Validation
+    runs-on: ubuntu-latest
+    # Only runs on push to main, not on pull requests.
+    if: github.event_name == 'push'
+    needs: [lint, test, build, govulncheck, docker-lint]
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          # Export to Docker daemon so Trivy can scan it locally.
+          load: true
+          tags: ${{ env.IMAGE_REF }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan image for vulnerabilities (Trivy)
+        uses: aquasecurity/trivy-action@0.31.0
+        with:
+          image-ref: ${{ env.IMAGE_REF }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+
+  # ── Summary gate (used by branch protection required status checks) ────────
+  # Branch protection should require "ci / all-checks-pass" instead of listing
+  # each individual job. This job acts as a single required check.
+  all-checks-pass:
+    name: All CI Checks Pass
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [lint, test, build, govulncheck, docker-lint]
+    steps:
+      - name: Check all required jobs succeeded
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          failed=$(echo "$NEEDS_JSON" | grep -c '"result": "failure"' || true)
+          cancelled=$(echo "$NEEDS_JSON" | grep -c '"result": "cancelled"' || true)
+          if [ "$failed" -gt 0 ] || [ "$cancelled" -gt 0 ]; then
+            echo "One or more required CI jobs failed or were cancelled."
+            exit 1
+          fi
+          echo "All required CI checks passed."

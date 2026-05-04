@@ -118,7 +118,9 @@ func (s *WebhookService) Handle(ctx context.Context, tx pgx.Tx, env *message.Env
 	if err != nil {
 		// Unknown provider — reject the ingress and ack. This is permanent:
 		// retrying won't bring the adapter into existence.
-		_ = s.store.MarkIngressRejected(ctx, tx, ingress.ID, "unknown provider: "+ingress.Provider)
+		if err := s.store.MarkIngressRejected(ctx, tx, ingress.ID, "unknown provider: "+ingress.Provider); err != nil {
+			return err
+		}
 		return workers.Permanent(fmt.Errorf("%w: %s", ErrUnknownProvider, ingress.Provider))
 	}
 
@@ -127,7 +129,9 @@ func (s *WebhookService) Handle(ctx context.Context, tx pgx.Tx, env *message.Env
 	// before VerifyWebhook returns nil.
 	if verifyErr := prov.VerifyWebhook(ctx, ingress.RawHeaders, ingress.RawBody); verifyErr != nil {
 		reason := truncateReason(verifyErr.Error())
-		_ = s.store.MarkIngressRejected(ctx, tx, ingress.ID, reason)
+		if err := s.store.MarkIngressRejected(ctx, tx, ingress.ID, reason); err != nil {
+			return err
+		}
 		s.logger.Warn("webhook signature invalid; ingress rejected",
 			"ingress_id", ingress.ID,
 			"provider", ingress.Provider,
@@ -139,7 +143,9 @@ func (s *WebhookService) Handle(ctx context.Context, tx pgx.Tx, env *message.Env
 	event, parseErr := prov.ParseWebhook(ctx, ingress.RawHeaders, ingress.RawBody)
 	if parseErr != nil {
 		reason := truncateReason(parseErr.Error())
-		_ = s.store.MarkIngressRejected(ctx, tx, ingress.ID, reason)
+		if err := s.store.MarkIngressRejected(ctx, tx, ingress.ID, reason); err != nil {
+			return err
+		}
 		return workers.Permanent(fmt.Errorf("%w: ingress=%s", ErrWebhookParseFailed, ingress.ID))
 	}
 
@@ -173,7 +179,9 @@ func (s *WebhookService) Handle(ctx context.Context, tx pgx.Tx, env *message.Env
 	if event.ProviderPaymentID == "" {
 		// Cannot link to a payment without a provider payment id.
 		// Mark ingress rejected; this is a parse-level issue.
-		_ = s.store.MarkIngressRejected(ctx, tx, ingress.ID, "missing provider_payment_id in event")
+		if err := s.store.MarkIngressRejected(ctx, tx, ingress.ID, "missing provider_payment_id in event"); err != nil {
+			return err
+		}
 		return workers.Permanent(fmt.Errorf("webhook: provider_payment_id empty in parsed event"))
 	}
 

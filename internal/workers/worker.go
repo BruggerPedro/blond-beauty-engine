@@ -92,6 +92,11 @@ func (w *Worker) Run(ctx context.Context) error {
 	if err := queue.Declare(ch, spec); err != nil {
 		return err
 	}
+	retryPub, err := queue.NewPublisher(w.conn)
+	if err != nil {
+		return fmt.Errorf("retry publisher: %w", err)
+	}
+	defer retryPub.Close()
 	if err := ch.Qos(w.cfg.Concurrency, 0, false); err != nil {
 		return fmt.Errorf("qos: %w", err)
 	}
@@ -119,7 +124,7 @@ loop:
 			go func(d amqp.Delivery) {
 				defer wg.Done()
 				defer func() { <-sem }()
-				w.process(ctx, &d)
+				w.process(ctx, retryPub, &d)
 			}(d)
 		}
 	}
@@ -129,7 +134,7 @@ loop:
 	return nil
 }
 
-func (w *Worker) process(ctx context.Context, d *amqp.Delivery) {
+func (w *Worker) process(ctx context.Context, retryPub *queue.Publisher, d *amqp.Delivery) {
 	w.metrics.WorkerInflight.WithLabelValues(w.cfg.Queue).Inc()
 	defer w.metrics.WorkerInflight.WithLabelValues(w.cfg.Queue).Dec()
 	start := time.Now()
@@ -143,6 +148,7 @@ func (w *Worker) process(ctx context.Context, d *amqp.Delivery) {
 	}
 
 	attempt := readAttempt(d.Headers) + 1
+	finalAttempt := attempt >= w.cfg.MaxAttempts
 	logger := w.logger.With(
 		"message_id", env.MessageID,
 		"correlation_id", env.CorrelationID,
@@ -151,7 +157,7 @@ func (w *Worker) process(ctx context.Context, d *amqp.Delivery) {
 		"attempt", attempt,
 	)
 
-	err = w.runOnce(ctx, env)
+	err = w.runOnce(ctx, env, finalAttempt)
 	w.metrics.MessageLatency.WithLabelValues(w.cfg.Queue).Observe(time.Since(start).Seconds())
 
 	switch {
@@ -165,37 +171,38 @@ func (w *Worker) process(ctx context.Context, d *amqp.Delivery) {
 		w.metrics.MessagesProcessed.WithLabelValues(w.cfg.Queue, "skip").Inc()
 		logger.Info("duplicate; acked")
 
-	case Classify(err) == RetryPermanent || attempt >= w.cfg.MaxAttempts:
+	case Classify(err) == RetryPermanent || finalAttempt:
 		// route to DLQ
 		_ = d.Nack(false, false)
 		w.metrics.MessagesProcessed.WithLabelValues(w.cfg.Queue, "dlq").Inc()
 		logger.Error("routing to DLQ", "err", err, "permanent", Classify(err) == RetryPermanent)
 
 	default:
-		// transient: sleep with backoff, then republish via mandatory=true would
-		// require an external "delay" exchange. For Slice A we keep behavior
-		// simple: sleep in-process then nack with requeue. This is acceptable
-		// for fake/no-op flows; real workers in later slices SHOULD use a
-		// delayed-message exchange or per-attempt TTL queues.
+		// Transient: sleep with backoff, then publish a fresh copy with an
+		// incremented attempt header. Ack the original only after the retry copy
+		// is durably confirmed by RabbitMQ.
 		delay := Backoff(attempt, w.cfg.BackoffBase, w.cfg.BackoffMax)
 		logger.Warn("transient failure; will retry", "err", err, "delay", delay.String())
 		select {
 		case <-time.After(delay):
 		case <-ctx.Done():
+			_ = d.Nack(false, true)
+			return
 		}
-		// Re-queue with incremented attempt header by republishing? The amqp
-		// nack(requeue=true) preserves headers but does not let us increment.
-		// For the skeleton we requeue and rely on broker redelivery counters
-		// in DLQ headers (`x-death`) for visibility. Real workers replace this
-		// with an explicit delay-exchange retry.
-		_ = d.Nack(false, true)
+		headers := retryHeaders(d.Headers, attempt)
+		if pubErr := retryPub.Publish(ctx, w.cfg.Queue, d.Body, headers); pubErr != nil {
+			logger.Error("retry publish failed; requeueing original", "err", pubErr)
+			_ = d.Nack(false, true)
+			return
+		}
+		_ = d.Ack(false)
 		w.metrics.MessagesProcessed.WithLabelValues(w.cfg.Queue, "retry").Inc()
 	}
 }
 
 var errAlreadyProcessed = errors.New("already processed")
 
-func (w *Worker) runOnce(ctx context.Context, env *message.Envelope) error {
+func (w *Worker) runOnce(ctx context.Context, env *message.Envelope, finalAttempt bool) error {
 	tx, err := w.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -211,6 +218,18 @@ func (w *Worker) runOnce(ctx context.Context, env *message.Envelope) error {
 	}
 
 	if err := w.handler(ctx, tx, env); err != nil {
+		if Classify(err) == RetryPermanent || finalAttempt {
+			if markErr := w.idem.MarkDone(ctx, tx, w.cfg.Queue, env.MessageID); markErr != nil {
+				return markErr
+			}
+		} else {
+			if releaseErr := w.idem.Release(ctx, tx, w.cfg.Queue, env.MessageID); releaseErr != nil {
+				return releaseErr
+			}
+		}
+		if commitErr := tx.Commit(ctx); commitErr != nil {
+			return commitErr
+		}
 		return err
 	}
 	if err := w.idem.MarkDone(ctx, tx, w.cfg.Queue, env.MessageID); err != nil {
@@ -236,4 +255,13 @@ func readAttempt(h amqp.Table) int {
 		return n
 	}
 	return 0
+}
+
+func retryHeaders(in amqp.Table, completedAttempt int) amqp.Table {
+	out := amqp.Table{}
+	for k, v := range in {
+		out[k] = v
+	}
+	out[headerAttempt] = int32(completedAttempt)
+	return out
 }

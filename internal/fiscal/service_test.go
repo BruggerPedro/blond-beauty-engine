@@ -547,3 +547,11 @@ func TestHandleIssue_TransientError(t *testing.T) {
 		t.Error("fulfillment must not be emitted on transient error")
 	}
 }
+
+func TestBuildIdemKeySeparatesDelimiterCollisions(t *testing.T) {
+	a := buildIdemKey("msg|invoice", "issue", "op")
+	b := buildIdemKey("msg", "invoice|issue", "op")
+	if a == b {
+		t.Fatal("must not collide when identifiers contain delimiters")
+	}
+}

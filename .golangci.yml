@@ -1,0 +1,78 @@
+run:
+  timeout: 5m
+
+linters:
+  disable-all: true
+  enable:
+    # Correctness — always on
+    - govet
+    - errcheck
+    - staticcheck
+    - ineffassign
+    - typecheck
+
+    # Security
+    - gosec
+
+    # Quality
+    - bodyclose
+    - durationcheck
+    - exhaustive
+    - nilerr
+    - unconvert
+
+linters-settings:
+  gosec:
+    excludes:
+      # G104 already covered by errcheck; avoids double noise.
+      - G104
+      # G404: math/rand/v2 is the correct choice for retry jitter and
+      # similar non-cryptographic randomness. crypto/rand is unnecessary here.
+      - G404
+      # G115: int→int32 conversions in config loading (PostgresMaxConns,
+      # Concurrency) are safe — values come from env vars bounded by sane
+      # defaults, never approaching int32 overflow.
+      - G115
+    config:
+      global:
+        audit: true
+
+  errcheck:
+    # Do NOT flag `_ = f()` or `_, _ = f()` patterns.
+    # The project uses explicit blank-identifier assignment to document
+    # intentional error ignores (cleanup closes, deferred rollbacks, etc.).
+    # Flagging these creates noise without improving safety.
+    check-type-assertions: true
+    check-blank: false
+
+  govet:
+    enable-all: true
+    disable:
+      # fieldalignment: struct layout optimization is out of scope.
+      - fieldalignment
+      # shadow: `if err := f(); err != nil` is idiomatic Go. Flagging every
+      # err re-declaration in nested scopes creates excessive noise.
+      - shadow
+
+  exhaustive:
+    default-signifies-exhaustive: true
+
+issues:
+  max-issues-per-linter: 50
+  max-same-issues: 10
+  exclude-use-default: false
+
+  exclude-rules:
+    # Test files may use unexported fields, multi-return ignores (x, _ := f()),
+    # and less strict security patterns — all acceptable in test context.
+    - path: _test\.go
+      linters:
+        - gosec
+        - errcheck
+
+    # Deferred Close() calls on channels, connections, and similar resources
+    # cannot meaningfully use the error return — the resource is being released
+    # at function exit. This is the standard Go cleanup pattern.
+    - source: "defer \\S+\\.Close\\(\\)"
+      linters:
+        - errcheck
