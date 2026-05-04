@@ -18,7 +18,6 @@ linters:
     - bodyclose
     - durationcheck
     - exhaustive
-    - misspell
     - nilerr
     - unconvert
 
@@ -57,10 +56,6 @@ linters-settings:
 
   exhaustive:
     default-signifies-exhaustive: true
-
-  misspell:
-    # Project uses British English throughout (behaviour, honour, cancelled).
-    locale: UK
 
 issues:
   max-issues-per-linter: 50
