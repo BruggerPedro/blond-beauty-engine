@@ -1,0 +1,77 @@
+name: Deploy
+
+# Deploys to production on every push to main (i.e., after a PR is merged).
+# Runs the same checks as CI inline so the deploy is self-contained and
+# auditable without relying on a separate workflow having passed.
+#
+# Before going live:
+#   1. Create a "production" environment in Settings → Environments.
+#   2. Add required secrets: PROD_POSTGRES_URL, PROD_RABBIT_URL, PROD_REDIS_URL.
+#   3. Replace the placeholder deploy step with your real command.
+#   4. Optionally add Required Reviewers to the environment for a manual gate.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Never allow two production deploys to run concurrently.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  GO_VERSION: "1.25.9"
+
+jobs:
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://blondbeauty.com.br
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # ── Verify before deploying ─────────────────────────────────────────
+      - name: Test (race detector)
+        run: go test -count=1 -race ./...
+
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      - name: Build engine binary
+        run: go build -trimpath -o bin/engine ./cmd/engine
+
+      # ── Deploy ──────────────────────────────────────────────────────────
+      # Replace this step with your actual deployment command.
+      # Secrets are injected from the "production" GitHub Environment.
+      - name: Deploy
+        env:
+          PROD_POSTGRES_URL: ${{ secrets.PROD_POSTGRES_URL }}
+          PROD_RABBIT_URL:   ${{ secrets.PROD_RABBIT_URL }}
+          PROD_REDIS_URL:    ${{ secrets.PROD_REDIS_URL }}
+        run: |
+          echo "Binary built at bin/engine — deploy it to your target."
+          echo ""
+          echo "Common options:"
+          echo ""
+          echo "  Railway:"
+          echo "    railway up --service engine --environment production"
+          echo ""
+          echo "  Fly.io:"
+          echo "    flyctl deploy --app blond-engine-prod"
+          echo ""
+          echo "  VPS via SSH:"
+          echo "    scp bin/engine deploy@prod.blondbeauty.com.br:/opt/engine/"
+          echo "    ssh deploy@prod.blondbeauty.com.br 'systemctl restart engine'"
