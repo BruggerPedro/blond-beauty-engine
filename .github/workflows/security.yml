@@ -28,7 +28,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  GO_VERSION: "1.25.4"
+  GO_VERSION: "1.25.9"
 
 jobs:
   # ── 1. CodeQL (SAST) ───────────────────────────────────────────────────────
@@ -154,10 +154,11 @@ jobs:
     needs: [codeql, gitleaks]
     steps:
       - name: Check required security jobs succeeded
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
         run: |
-          results='${{ toJSON(needs) }}'
-          failed=$(echo "$results" | grep -c '"result": "failure"' || true)
-          cancelled=$(echo "$results" | grep -c '"result": "cancelled"' || true)
+          failed=$(echo "$NEEDS_JSON" | grep -c '"result": "failure"' || true)
+          cancelled=$(echo "$NEEDS_JSON" | grep -c '"result": "cancelled"' || true)
           if [ "$failed" -gt 0 ] || [ "$cancelled" -gt 0 ]; then
             echo "One or more required security checks failed or were cancelled."
             exit 1

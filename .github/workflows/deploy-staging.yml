@@ -24,7 +24,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  GO_VERSION: "1.25.4"
+  GO_VERSION: "1.25.9"
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
@@ -206,10 +206,17 @@ jobs:
           echo "To add them: Settings → Environments → staging → Environment secrets"
 
       - name: Staging deploy summary
+        env:
+          GH_SHA: ${{ github.sha }}
+          GH_ACTOR: ${{ github.actor }}
+          IMAGE_DIGEST: ${{ needs.build-push-image.outputs.image-digest }}
         run: |
-          echo "### Staging Deploy" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Image digest:** \`${{ needs.build-push-image.outputs.image-digest }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Actor:** \`${{ github.actor }}\`" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "### Staging Deploy"
+            echo ""
+            echo "- **Commit:** \`$GH_SHA\`"
+            echo "- **Image digest:** \`$IMAGE_DIGEST\`"
+            echo "- **Actor:** \`$GH_ACTOR\`"
+            echo "- **Time:** $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_STEP_SUMMARY"
           echo "- **Time:** $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY

@@ -52,35 +52,49 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Validate branch
+        # All github context values are passed via env to avoid shell injection.
+        env:
+          GH_REF: ${{ github.ref }}
         run: |
-          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+          if [ "$GH_REF" != "refs/heads/main" ]; then
             echo "ERROR: Production deploys are only allowed from the main branch."
-            echo "       This run was triggered from: ${{ github.ref }}"
+            echo "       This run was triggered from: $GH_REF"
             echo "       Aborting."
             exit 1
           fi
           echo "Branch check passed: deploying from main."
 
       - name: Validate image tag input
+        # User-provided inputs are always passed via env, never interpolated
+        # directly into shell scripts (prevents shell injection: Semgrep rule
+        # yami.github-actions.security.run-shell-injection).
+        env:
+          INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
-          TAG="${{ inputs.image_tag }}"
-          if [ -z "$TAG" ]; then
+          if [ -z "$INPUT_IMAGE_TAG" ]; then
             echo "ERROR: image_tag input is empty. Provide a specific SHA tag."
             exit 1
           fi
-          echo "Image tag to deploy: $TAG"
+          echo "Image tag to deploy: $INPUT_IMAGE_TAG"
 
       - name: Log deploy intent
+        env:
+          GH_ACTOR: ${{ github.actor }}
+          GH_SHA: ${{ github.sha }}
+          INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
+          INPUT_REASON: ${{ inputs.reason }}
         run: |
-          echo "### Production Deploy Requested" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Actor:** \`${{ github.actor }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Image tag:** \`${{ inputs.image_tag }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Reason:** ${{ inputs.reason }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Time:** $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "> Awaiting manual approval from required reviewers." >> $GITHUB_STEP_SUMMARY
+          {
+            echo "### Production Deploy Requested"
+            echo ""
+            echo "- **Actor:** \`$GH_ACTOR\`"
+            echo "- **Image tag:** \`$INPUT_IMAGE_TAG\`"
+            echo "- **Reason:** $INPUT_REASON"
+            echo "- **Commit:** \`$GH_SHA\`"
+            echo "- **Time:** $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo ""
+            echo "> Awaiting manual approval from required reviewers."
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ── Production deployment ─────────────────────────────────────────────────
   # This job is gated by the GitHub Environment "production" which requires
@@ -107,9 +121,13 @@ jobs:
 
       - name: Resolve image reference
         id: image
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMG_NAME: ${{ env.IMAGE_NAME }}
+          INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
-          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}"
-          echo "image=$IMAGE" >> $GITHUB_OUTPUT
+          IMAGE="$REGISTRY/$IMG_NAME:$INPUT_IMAGE_TAG"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
           echo "Deploying image: $IMAGE"
 
       - name: Deploy to production
@@ -155,13 +173,20 @@ jobs:
 
       - name: Production deploy summary
         if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          GH_ACTOR: ${{ github.actor }}
+          GH_SHA: ${{ github.sha }}
+          INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
+          INPUT_REASON: ${{ inputs.reason }}
         run: |
-          STATUS="${{ job.status }}"
-          echo "### Production Deploy Result: $STATUS" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Actor:** \`${{ github.actor }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Image tag:** \`${{ inputs.image_tag }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Reason:** ${{ inputs.reason }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Status:** $STATUS" >> $GITHUB_STEP_SUMMARY
-          echo "- **Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Time:** $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "### Production Deploy Result: $JOB_STATUS"
+            echo ""
+            echo "- **Actor:** \`$GH_ACTOR\`"
+            echo "- **Image tag:** \`$INPUT_IMAGE_TAG\`"
+            echo "- **Reason:** $INPUT_REASON"
+            echo "- **Status:** $JOB_STATUS"
+            echo "- **Commit:** \`$GH_SHA\`"
+            echo "- **Time:** $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_STEP_SUMMARY"

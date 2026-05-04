@@ -1,9 +1,10 @@
 # syntax=docker/dockerfile:1
 
 # ── Stage 1: Build ──────────────────────────────────────────────────────────
-FROM golang:1.25.4-alpine AS builder
+FROM golang:1.25.9-alpine AS builder
 
 # Install CA certificates for TLS calls made during build (if any).
+# hadolint ignore=DL3018
 RUN apk add --no-cache ca-certificates tzdata
 
 WORKDIR /app

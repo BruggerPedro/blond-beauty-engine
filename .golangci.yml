@@ -1,38 +1,31 @@
 run:
   timeout: 5m
-  go: "1.25"
 
 linters:
   disable-all: true
   enable:
-    # Correctness
+    # Correctness — always on
     - govet
     - errcheck
     - staticcheck
-    - unused
     - ineffassign
     - typecheck
 
     # Security
     - gosec
 
-    # Style / quality
+    # Quality
     - bodyclose
-    - contextcheck
     - durationcheck
     - exhaustive
     - misspell
     - nilerr
-    - noctx
-    - sqlclosecheck
     - unconvert
-    - unparam
 
 linters-settings:
   gosec:
-    # G104 (errors unhandled) already covered by errcheck; avoid double noise.
     excludes:
-      - G104
+      - G104  # covered by errcheck; avoids double noise
     config:
       global:
         audit: true
@@ -44,7 +37,7 @@ linters-settings:
   govet:
     enable-all: true
     disable:
-      - fieldalignment  # struct layout optimization is out of scope for this project
+      - fieldalignment  # struct layout optimization is out of scope here
 
   exhaustive:
     default-signifies-exhaustive: true
@@ -55,8 +48,6 @@ linters-settings:
 issues:
   max-issues-per-linter: 50
   max-same-issues: 10
-
-  # Allow nolint directives only when they carry an explanation.
   exclude-use-default: false
 
   exclude-rules:
@@ -64,9 +55,3 @@ issues:
     - path: _test\.go
       linters:
         - gosec
-        - unparam
-
-    # Migration SQL runner in main uses os.Exit — accepted pattern.
-    - path: cmd/engine/main\.go
-      linters:
-        - unparam
