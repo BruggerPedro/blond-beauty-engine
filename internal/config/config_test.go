@@ -28,3 +28,19 @@ func TestLoadDefaults(t *testing.T) {
 		t.Fatal("fake worker should default on for slice A")
 	}
 }
+
+func TestEnsureFakeProviderAllowedRejectsProduction(t *testing.T) {
+	for _, env := range []string{"prod", "production", " PRODUCTION "} {
+		if err := EnsureFakeProviderAllowed(env, "fake"); err == nil {
+			t.Fatalf("expected fake provider to be rejected for env %q", env)
+		}
+	}
+}
+
+func TestEnsureFakeProviderAllowedAllowsNonProduction(t *testing.T) {
+	for _, env := range []string{"dev", "test", "staging", ""} {
+		if err := EnsureFakeProviderAllowed(env, "fake"); err != nil {
+			t.Fatalf("unexpected rejection for env %q: %v", env, err)
+		}
+	}
+}

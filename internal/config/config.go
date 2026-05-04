@@ -131,6 +131,26 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+func (c *Config) IsProduction() bool {
+	return IsProductionEnv(c.Env)
+}
+
+func IsProductionEnv(env string) bool {
+	switch strings.ToLower(strings.TrimSpace(env)) {
+	case "prod", "production":
+		return true
+	default:
+		return false
+	}
+}
+
+func EnsureFakeProviderAllowed(env, providerName string) error {
+	if IsProductionEnv(env) {
+		return fmt.Errorf("fake provider %q is not allowed when ENGINE_ENV=%s", providerName, env)
+	}
+	return nil
+}
+
 func getenv(k, def string) string {
 	if v, ok := os.LookupEnv(k); ok && v != "" {
 		return v

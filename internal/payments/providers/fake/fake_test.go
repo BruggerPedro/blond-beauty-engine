@@ -94,3 +94,26 @@ func TestIllegalTransition(t *testing.T) {
 		t.Fatalf("want illegal, got %v", err)
 	}
 }
+
+func TestVerifyWebhook(t *testing.T) {
+	p := New()
+	body := []byte(`{"event_id":"evt_1","provider_payment_id":"fake_1","status":"paid"}`)
+	headers := map[string]string{sigHeader: SignBody(body)}
+	if err := p.VerifyWebhook(context.Background(), headers, body); err != nil {
+		t.Fatalf("valid signature rejected: %v", err)
+	}
+
+	headers[sigHeader] = SignBody([]byte(`different body`))
+	err := p.VerifyWebhook(context.Background(), headers, body)
+	if !errors.Is(err, payments.ErrWebhookSignatureInvalid) {
+		t.Fatalf("want invalid signature, got %v", err)
+	}
+}
+
+func TestVerifyWebhookRejectsMalformedSignature(t *testing.T) {
+	p := New()
+	err := p.VerifyWebhook(context.Background(), map[string]string{sigHeader: "not-hex"}, []byte("{}"))
+	if !errors.Is(err, payments.ErrWebhookSignatureInvalid) {
+		t.Fatalf("want invalid signature, got %v", err)
+	}
+}

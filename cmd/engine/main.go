@@ -47,6 +47,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	if err := validateFakeProviders(cfg); err != nil {
+		return err
+	}
 	logger := observability.NewLogger(cfg.LogLevel, cfg.ServiceName, cfg.Env)
 	slog.SetDefault(logger)
 	logger.Info("starting", "version", "slice-a")
@@ -226,5 +229,29 @@ func run() error {
 	}
 
 	logger.Info("bye")
+	return nil
+}
+
+func validateFakeProviders(cfg *config.Config) error {
+	if cfg.EnablePaymentsWorkers {
+		if err := config.EnsureFakeProviderAllowed(cfg.Env, fake.Name); err != nil {
+			return err
+		}
+	}
+	if cfg.EnableEmailWorkers {
+		if err := config.EnsureFakeProviderAllowed(cfg.Env, emailfake.Name); err != nil {
+			return err
+		}
+	}
+	if cfg.EnableFiscalWorkers {
+		if err := config.EnsureFakeProviderAllowed(cfg.Env, fiscalfake.Name); err != nil {
+			return err
+		}
+	}
+	if cfg.EnableFulfillmentWorkers {
+		if err := config.EnsureFakeProviderAllowed(cfg.Env, fulfillmentfake.Name); err != nil {
+			return err
+		}
+	}
 	return nil
 }

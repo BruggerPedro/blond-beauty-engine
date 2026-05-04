@@ -678,7 +678,7 @@ Expected:
 | `ENGINE_REDIS_URL` | no | `""` | leave empty to disable |
 | `ENGINE_HTTP_ADDR` | no | `:8081` | bind for /healthz /readyz /metrics |
 | `ENGINE_LOG_LEVEL` | no | `info` | `debug` / `info` / `warn` / `error` |
-| `ENGINE_ENV` | no | `dev` | `dev` / `staging` / `prod` |
+| `ENGINE_ENV` | no | `dev` | `dev` / `staging` / `prod`; fake providers are refused in `prod`/`production` |
 | `ENGINE_SERVICE_NAME` | no | `blond-beauty-engine` | added to every log line |
 | `ENGINE_POSTGRES_MAX_CONNS` | no | `10` | |
 | `ENGINE_RABBIT_PREFETCH` | no | `32` | per-consumer prefetch |
@@ -694,6 +694,8 @@ Expected:
 | `ENGINE_FULFILLMENT_CONCURRENCY` | no | `4` | goroutines for orders.fulfillment |
 
 Never put production credentials in `.env.example` or commit `.env`.
+With `ENGINE_ENV=prod` or `ENGINE_ENV=production`, the Engine fails fast if any
+currently fake-backed provider worker is enabled.
 
 ## Graceful shutdown
 
@@ -754,8 +756,9 @@ idempotency key guarantee safety without a long-held lock.
 | Fulfillment | `fake-fulfillment` | Correios / Melhor Envio (future) |
 
 The Engine's real Getnet adapter is explicitly deferred. The fake provider is the only
-adapter that ships in this slice. Do not implement Getnet until the two-phase model
-refactor is in place.
+adapter that ships in this slice. The process refuses to boot fake-backed provider
+workers when `ENGINE_ENV=prod` or `ENGINE_ENV=production`. Do not implement Getnet
+until the two-phase model refactor is in place.
 
 ### Fiscal compliance notice
 

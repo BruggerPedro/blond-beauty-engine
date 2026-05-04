@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/blondbeauty/blond-beauty-engine/internal/idempotency"
 	"github.com/blondbeauty/blond-beauty-engine/internal/message"
 	"github.com/blondbeauty/blond-beauty-engine/internal/workers"
 )
@@ -422,5 +423,5 @@ func chain(child *message.Envelope, parent *message.Envelope) {
 
 // buildIdemKey derives a stable, opaque key for (message, invoice, op).
 func buildIdemKey(messageID, invoiceID, op string) string {
-	return messageID + "|" + invoiceID + "|" + op
+	return idempotency.Key("fiscal.provider_request", messageID, invoiceID, op)
 }

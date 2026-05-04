@@ -34,6 +34,7 @@ package fake
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -161,8 +162,12 @@ func (p *Provider) VerifyWebhook(_ context.Context, headers map[string]string, r
 	if got == "" {
 		return fmt.Errorf("%w: missing %s header", payments.ErrWebhookSignatureInvalid, sigHeader)
 	}
-	want := SignBody(rawBody)
-	if got != want {
+	gotDigest, err := hex.DecodeString(got)
+	if err != nil || len(gotDigest) != sha256.Size {
+		return fmt.Errorf("%w: malformed signature", payments.ErrWebhookSignatureInvalid)
+	}
+	want := sha256.Sum256(rawBody)
+	if !hmac.Equal(gotDigest, want[:]) {
 		return fmt.Errorf("%w: signature mismatch", payments.ErrWebhookSignatureInvalid)
 	}
 	return nil

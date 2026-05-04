@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/blondbeauty/blond-beauty-engine/internal/idempotency"
 	"github.com/blondbeauty/blond-beauty-engine/internal/message"
 	"github.com/blondbeauty/blond-beauty-engine/internal/workers"
 )
@@ -304,5 +305,5 @@ func chain(child *message.Envelope, parent *message.Envelope) {
 // buildRequestKey derives a stable idempotency key for (message, shipment).
 // Stable across worker retries of the same message.
 func buildRequestKey(messageID, shipmentID string) string {
-	return messageID + "|" + shipmentID
+	return idempotency.Key("fulfillment.provider_request", messageID, shipmentID)
 }

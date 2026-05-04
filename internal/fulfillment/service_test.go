@@ -560,6 +560,14 @@ func TestHandleFulfillment_NoSensitiveDataInEvents(t *testing.T) {
 	}
 }
 
+func TestBuildRequestKeySeparatesDelimiterCollisions(t *testing.T) {
+	a := buildRequestKey("msg|shipment", "dispatch")
+	b := buildRequestKey("msg", "shipment|dispatch")
+	if a == b {
+		t.Fatal("must not collide when identifiers contain delimiters")
+	}
+}
+
 // ---- helpers -------------------------------------------------------------
 
 func assertPermanent(t *testing.T, err error, label string) {
