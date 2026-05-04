@@ -56,10 +56,13 @@ jobs:
         run: go vet ./...
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: latest
-          args: --timeout=5m
+        # The golangci-lint-action downloads a pre-built binary compiled with
+        # Go 1.24, which refuses to analyse Go 1.25.x projects. We install
+        # from source instead so it is compiled by the Go 1.25.9 toolchain
+        # already set up above — resolving the version mismatch completely.
+        run: |
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+          golangci-lint run --timeout=5m
 
   # ── 2. Tests ───────────────────────────────────────────────────────────────
   test:

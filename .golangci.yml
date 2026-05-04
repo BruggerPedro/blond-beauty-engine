@@ -1,10 +1,5 @@
 run:
   timeout: 5m
-  # Override the Go version for lint analysis. golangci-lint v1.64.x was
-  # compiled with Go 1.24 and refuses to run against projects declaring
-  # go 1.25.x in go.mod. Setting "1.24" here bypasses that version check;
-  # Go is backward-compatible so all lint rules still apply.
-  go: "1.24"
 
 linters:
   disable-all: true
