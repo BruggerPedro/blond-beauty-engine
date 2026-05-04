@@ -43,16 +43,16 @@ jobs:
       security-events: write  # Required to upload SARIF results.
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: go
           # security-and-quality includes CWE queries on top of the default
@@ -65,7 +65,7 @@ jobs:
         run: go build ./...
 
       - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:go"
 
@@ -79,7 +79,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout full history
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           # Full history is required for Gitleaks to scan all commits.
           fetch-depth: 0
@@ -109,7 +109,7 @@ jobs:
       image: semgrep/semgrep:latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Run Semgrep
         run: |
@@ -138,7 +138,7 @@ jobs:
 
       - name: Upload Semgrep results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: semgrep-results-${{ github.sha }}
           path: semgrep-results.json
