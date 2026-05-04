@@ -347,6 +347,10 @@ func successEventFor(op Operation, st Status) string {
 			return EventFailed
 		case StatusPaid:
 			return EventCaptured
+		default:
+			// Remaining statuses (Unknown, Captured, Cancelled, Refunded,
+			// Chargeback) are not expected outcomes of create/confirm; fall
+			// through to return "" below.
 		}
 	case OpCapture:
 		if st == StatusPaid || st == StatusCaptured {

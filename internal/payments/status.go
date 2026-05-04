@@ -30,8 +30,9 @@ func (s Status) IsTerminal() bool {
 	switch s {
 	case StatusPaid, StatusFailed, StatusCancelled, StatusRefunded, StatusChargeback:
 		return true
+	default:
+		return false
 	}
-	return false
 }
 
 func (s Status) Valid() bool {
