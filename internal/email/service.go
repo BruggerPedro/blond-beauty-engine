@@ -102,8 +102,12 @@ func (s *Service) Handle(ctx context.Context, tx pgx.Tx, env *message.Envelope) 
 		m.Status = StatusFailed
 		m.LastError = truncate(renderErr.Error(), 500)
 		m.AttemptCount++
-		_ = s.store.UpdateMessage(ctx, tx, m)
-		_ = s.emitFailed(ctx, tx, env, m, renderErr.Error())
+		if err := s.store.UpdateMessage(ctx, tx, m); err != nil {
+			return err
+		}
+		if err := s.emitFailed(ctx, tx, env, m, renderErr.Error()); err != nil {
+			return err
+		}
 		return workers.Permanent(renderErr)
 	}
 	if rendered.Subject != "" {
@@ -134,11 +138,17 @@ func (s *Service) Handle(ctx context.Context, tx pgx.Tx, env *message.Envelope) 
 		m.LastError = truncate(sendErr.Error(), 500)
 		if errors.Is(sendErr, ErrProviderPermanent) {
 			m.Status = StatusFailed
-			_ = s.store.UpdateMessage(ctx, tx, m)
-			_ = s.emitFailed(ctx, tx, env, m, sendErr.Error())
+			if err := s.store.UpdateMessage(ctx, tx, m); err != nil {
+				return err
+			}
+			if err := s.emitFailed(ctx, tx, env, m, sendErr.Error()); err != nil {
+				return err
+			}
 			return workers.Permanent(sendErr)
 		}
-		_ = s.store.UpdateMessage(ctx, tx, m)
+		if err := s.store.UpdateMessage(ctx, tx, m); err != nil {
+			return err
+		}
 		return sendErr // transient → worker retries with backoff
 	}
 

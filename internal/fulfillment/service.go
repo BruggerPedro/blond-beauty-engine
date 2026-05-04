@@ -129,16 +129,24 @@ func (s *Service) HandleFulfillment(ctx context.Context, tx pgx.Tx, env *message
 
 		if errors.Is(dispErr, ErrProviderPermanent) {
 			shipment.Status = ShipmentFailed
-			_ = s.store.UpdateShipment(ctx, tx, shipment)
-			_ = s.insertEvent(ctx, tx, shipment, EventFulfillmentFailed, map[string]any{
+			if err := s.store.UpdateShipment(ctx, tx, shipment); err != nil {
+				return err
+			}
+			if err := s.insertEvent(ctx, tx, shipment, EventFulfillmentFailed, map[string]any{
 				"error": truncate(dispErr.Error(), 200),
-			})
-			_ = s.emitFulfillmentFailed(ctx, tx, env, shipment)
+			}); err != nil {
+				return err
+			}
+			if err := s.emitFulfillmentFailed(ctx, tx, env, shipment); err != nil {
+				return err
+			}
 			return workers.Permanent(dispErr)
 		}
 
 		// Transient: persist attempt_count, let framework retry.
-		_ = s.store.UpdateShipment(ctx, tx, shipment)
+		if err := s.store.UpdateShipment(ctx, tx, shipment); err != nil {
+			return err
+		}
 		return dispErr
 	}
 

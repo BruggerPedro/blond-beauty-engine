@@ -562,11 +562,11 @@ same transaction as its business work. A duplicate message is acked without re-p
 Each domain has additional dedup:
 
 - **Payments**: `payment_attempts(payment_id, operation, request_id)` unique index.
-  `request_id` is `sha256(message_id | payment_id | operation)`.
+  `request_id` is a canonical SHA-256 key built from typed JSON key material.
 - **Webhook**: `payment_events(provider, provider_event_id)` unique index.
 - **Email**: `email_messages.idempotency_key` unique constraint; already-sent guard in `Handle`.
 - **Fiscal**: invoice status guard (already-authorized → ack); `idempotency_key` per
-  call is `message_id|invoice_id|operation`.
+  call is a canonical SHA-256 key built from typed JSON key material.
 - **Fulfillment**: `shipments.idempotency_key` = `"fulfill|" + order_id` unique; already-
   dispatched guard in `Handle`.
 
@@ -578,7 +578,8 @@ Each domain has additional dedup:
 | `ErrProviderTransient`, unclassified errors | plain error → exponential backoff retry |
 
 The worker framework (see [`internal/workers/worker.go`](internal/workers/worker.go))
-handles nack-with-requeue for transient errors and publishes to `.dlq` for permanent ones.
+commits handled failure state, republishes transient retries with an incremented
+`x-engine-attempt` header, and routes permanent/exhausted messages to `.dlq`.
 
 ### Permanent errors and DLQ
 
