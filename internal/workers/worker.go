@@ -217,8 +217,23 @@ func (w *Worker) runOnce(ctx context.Context, env *message.Envelope, finalAttemp
 		return errAlreadyProcessed
 	}
 
-	if err := w.handler(ctx, tx, env); err != nil {
-		if Classify(err) == RetryPermanent || finalAttempt {
+	// Savepoint: if the handler runs a query that fails and leaves the
+	// transaction in the PostgreSQL "aborted" state (SQLSTATE 25P02), we
+	// must roll back to here before attempting Release or MarkDone on the
+	// same connection — otherwise every subsequent statement in this tx
+	// will also fail with 25P02.
+	if _, err := tx.Exec(ctx, "SAVEPOINT handler_start"); err != nil {
+		return fmt.Errorf("savepoint: %w", err)
+	}
+
+	handlerErr := w.handler(ctx, tx, env)
+	if handlerErr != nil {
+		// Roll back the handler's partial writes and clear any aborted-tx
+		// state, keeping the idempotency Claim INSERT intact.
+		if _, spErr := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT handler_start"); spErr != nil {
+			return fmt.Errorf("rollback to savepoint: %w", spErr)
+		}
+		if Classify(handlerErr) == RetryPermanent || finalAttempt {
 			if markErr := w.idem.MarkDone(ctx, tx, w.cfg.Queue, env.MessageID); markErr != nil {
 				return markErr
 			}
@@ -230,7 +245,7 @@ func (w *Worker) runOnce(ctx context.Context, env *message.Envelope, finalAttemp
 		if commitErr := tx.Commit(ctx); commitErr != nil {
 			return commitErr
 		}
-		return err
+		return handlerErr
 	}
 	if err := w.idem.MarkDone(ctx, tx, w.cfg.Queue, env.MessageID); err != nil {
 		return err

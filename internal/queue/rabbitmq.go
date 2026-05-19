@@ -121,9 +121,14 @@ func Declare(ch *amqp.Channel, spec QueueSpec) error {
 
 // Publisher publishes JSON envelopes to the default exchange (direct to queue
 // name) with publisher confirms.
+//
+// confirms is registered once at construction time. Calling NotifyPublish on
+// every Publish would accumulate stale listener channels inside the amqp
+// library and eventually starve the current call of its confirmation.
 type Publisher struct {
-	ch *amqp.Channel
-	mu sync.Mutex
+	ch       *amqp.Channel
+	mu       sync.Mutex
+	confirms chan amqp.Confirmation
 }
 
 func NewPublisher(c *Conn) (*Publisher, error) {
@@ -135,7 +140,10 @@ func NewPublisher(c *Conn) (*Publisher, error) {
 		_ = ch.Close()
 		return nil, fmt.Errorf("enable confirms: %w", err)
 	}
-	return &Publisher{ch: ch}, nil
+	// Buffer large enough that a burst of concurrent publishes never blocks
+	// the broker from sending confirms back to us.
+	confirms := ch.NotifyPublish(make(chan amqp.Confirmation, 128))
+	return &Publisher{ch: ch, confirms: confirms}, nil
 }
 
 // Publish sends a payload to the named queue and waits for broker confirmation.
@@ -143,8 +151,6 @@ func NewPublisher(c *Conn) (*Publisher, error) {
 func (p *Publisher) Publish(ctx context.Context, queue string, body []byte, headers amqp.Table) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-
-	confirms := p.ch.NotifyPublish(make(chan amqp.Confirmation, 1))
 
 	err := p.ch.PublishWithContext(ctx,
 		"",    // default exchange (direct to queue)
@@ -163,7 +169,7 @@ func (p *Publisher) Publish(ctx context.Context, queue string, body []byte, head
 		return fmt.Errorf("publish: %w", err)
 	}
 	select {
-	case c, ok := <-confirms:
+	case c, ok := <-p.confirms:
 		if !ok {
 			return errors.New("confirms channel closed")
 		}
