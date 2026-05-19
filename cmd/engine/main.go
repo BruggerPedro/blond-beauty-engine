@@ -35,6 +35,22 @@ import (
 	"github.com/blondbeauty/blond-beauty-engine/internal/workers"
 )
 
+// engineSchema is the idempotent DDL for the engine-owned operational tables.
+// This mirrors migrations/engine/001_engine_processed_messages.up.sql and is
+// inlined here so the engine binary has no dependency on the filesystem layout.
+const engineSchema = `
+CREATE TABLE IF NOT EXISTS engine_processed_messages (
+    queue       text        NOT NULL,
+    message_id  text        NOT NULL,
+    status      text        NOT NULL CHECK (status IN ('in_progress', 'done')),
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    updated_at  timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (queue, message_id)
+);
+CREATE INDEX IF NOT EXISTS engine_processed_messages_created_at_idx
+    ON engine_processed_messages (created_at);
+`
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "fatal:", err)
@@ -67,6 +83,12 @@ func run() error {
 		return fmt.Errorf("postgres: %w", err)
 	}
 	defer pool.Close()
+
+	// Apply engine-owned schema (idempotent — uses CREATE TABLE IF NOT EXISTS).
+	if _, err := pool.Exec(startCtx, engineSchema); err != nil {
+		return fmt.Errorf("engine schema migration: %w", err)
+	}
+	logger.Info("engine schema applied")
 
 	rabbit, err := queue.Dial(cfg.RabbitURL)
 	if err != nil {
