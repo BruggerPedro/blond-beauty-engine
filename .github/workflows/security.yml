@@ -28,7 +28,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  GO_VERSION: "1.25.9"
+  GO_VERSION: "1.25.10"
 
 jobs:
   # ── 1. CodeQL (SAST) ───────────────────────────────────────────────────────
