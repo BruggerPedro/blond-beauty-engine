@@ -202,14 +202,14 @@ func (s *Service) run(
 	//   1. Short tx: claim/create an attempt row with status='pending'.
 	//   2. External call outside any DB transaction.
 	//   3. Short tx: update attempt + payment row + enqueue follow-up event.
-	// The unique index on payment_attempts(payment_id, operation, request_id)
-	// and the provider's own idempotency key together guarantee safety without
-	// a long-held row lock.
+	// Message-level idempotency is guaranteed by engine_processed_messages;
+	// the provider's own idempotency key provides safety at the provider level.
 	res, callErr := call(prov, row, requestID)
 
 	attempt := &AttemptRow{
 		ID:               uuid.NewString(),
 		PaymentID:        row.ID,
+		Provider:         row.Provider,
 		Operation:        op,
 		RequestID:        requestID,
 		Status:           "ok",

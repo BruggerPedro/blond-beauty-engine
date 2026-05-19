@@ -41,30 +41,32 @@ type PaymentRow struct {
 // AttemptRow records one provider call. Expected schema (API-owned):
 //
 //	create table payment_attempts (
-//	    id                uuid primary key,
-//	    payment_id        uuid not null references payments(id),
-//	    operation         text not null,
-//	    request_id        text not null,
-//	    status            text not null,         -- ok|failed
-//	    canonical_status  text,
-//	    error_code        text,
-//	    error_message     text,
-//	    redacted_request  jsonb,
-//	    redacted_response jsonb,
-//	    created_at        timestamptz not null default now(),
-//	    unique (payment_id, operation, request_id)
+//	    id                       uuid primary key default gen_random_uuid(),
+//	    payment_id               uuid not null references payments(id) on delete cascade,
+//	    provider                 text not null,
+//	    provider_operation_id    text,
+//	    operation_type           text not null,
+//	    status                   text not null,
+//	    request_hash             bytea,
+//	    response_snapshot        jsonb,
+//	    error_code               text,
+//	    created_at               timestamptz not null default now()
 //	);
+//
+// Fields not present as dedicated columns (CanonicalStatus, ErrorMessage,
+// RedactedRequest, RedactedResponse) are encoded into response_snapshot JSONB.
 type AttemptRow struct {
 	ID               string
 	PaymentID        string
+	Provider         string // maps to provider column (NOT NULL)
 	Operation        Operation
-	RequestID        string
+	RequestID        string // maps to provider_operation_id
 	Status           string // "ok" | "failed"
-	CanonicalStatus  Status
+	CanonicalStatus  Status // stored in response_snapshot
 	ErrorCode        string
-	ErrorMessage     string
-	RedactedRequest  json.RawMessage
-	RedactedResponse json.RawMessage
+	ErrorMessage     string          // stored in response_snapshot
+	RedactedRequest  json.RawMessage // stored in response_snapshot
+	RedactedResponse json.RawMessage // stored in response_snapshot
 }
 
 // IngressRow is the engine's read/write projection of the API-owned
@@ -193,16 +195,33 @@ WHERE id = $1`, p.ID, p.ProviderPaymentID, string(p.Status), le)
 }
 
 func (PgxStore) InsertAttempt(ctx context.Context, tx pgx.Tx, a *AttemptRow) error {
+	// Pack fields the API schema doesn't expose as dedicated columns into a
+	// single response_snapshot JSONB so they're still observable for debugging.
+	type snapFields struct {
+		CanonicalStatus string          `json:"canonical_status,omitempty"`
+		ErrorMessage    string          `json:"error_message,omitempty"`
+		Request         json.RawMessage `json:"request,omitempty"`
+		Response        json.RawMessage `json:"response,omitempty"`
+	}
+	snap := snapFields{
+		CanonicalStatus: string(a.CanonicalStatus),
+		ErrorMessage:    a.ErrorMessage,
+		Request:         a.RedactedRequest,
+		Response:        a.RedactedResponse,
+	}
+	var snapJSON json.RawMessage
+	if snap.CanonicalStatus != "" || snap.ErrorMessage != "" ||
+		len(snap.Request) > 0 || len(snap.Response) > 0 {
+		snapJSON, _ = json.Marshal(snap)
+	}
+
 	_, err := tx.Exec(ctx, `
 INSERT INTO payment_attempts
-    (id, payment_id, operation, request_id, status, canonical_status,
-     error_code, error_message, redacted_request, redacted_response)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb)
-ON CONFLICT (payment_id, operation, request_id) DO NOTHING`,
-		a.ID, a.PaymentID, string(a.Operation), a.RequestID,
-		a.Status, string(a.CanonicalStatus),
-		nullable(a.ErrorCode), nullable(a.ErrorMessage),
-		a.RedactedRequest, a.RedactedResponse,
+    (id, payment_id, provider, provider_operation_id, operation_type,
+     status, response_snapshot, error_code)
+VALUES ($1, $2, $3, NULLIF($4,''), $5, $6, $7::jsonb, $8)`,
+		a.ID, a.PaymentID, a.Provider, a.RequestID, string(a.Operation),
+		a.Status, snapJSON, nullable(a.ErrorCode),
 	)
 	if err != nil {
 		return fmt.Errorf("insert payment attempt: %w", err)
