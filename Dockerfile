@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ── Stage 1: Build ──────────────────────────────────────────────────────────
-FROM golang:1.26.2-alpine AS builder
+FROM golang:1.26.4-alpine AS builder
 
 # Install CA certificates for TLS calls made during build (if any).
 # hadolint ignore=DL3018
