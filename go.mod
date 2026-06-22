@@ -4,10 +4,10 @@ go 1.25.10
 
 require (
 	github.com/google/uuid v1.6.0
-	github.com/jackc/pgx/v5 v5.9.2
+	github.com/jackc/pgx/v5 v5.10.0
 	github.com/prometheus/client_golang v1.23.2
-	github.com/rabbitmq/amqp091-go v1.11.0
-	github.com/redis/go-redis/v9 v9.19.0
+	github.com/rabbitmq/amqp091-go v1.12.0
+	github.com/redis/go-redis/v9 v9.21.0
 )
 
 require (
